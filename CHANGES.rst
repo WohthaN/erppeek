@@ -2,6 +2,49 @@ Changelog
 ---------
 
 
+1.7.1 (2018-12-05)
+~~~~~~~~~~~~~~~~~~
+
+* Add support for the JSON-RPC protocol.  It is enabled if the ``--server``
+  argument contains the full path to the ``/jsonrpc`` endpoint.
+  As an alternative, you can specify the ``protocol`` in the configuration
+  file.
+
+* Change the return value of :meth:`Model.browse` method if search domain is
+  an empty list.  It returns an empty ``RecordList`` except if some other
+  argument is provided (e.g.
+  ``all_users = model('res.users').browse([], limit=None)``).
+  Compatibility tip: you can restore the old behavior with
+  ``Model._browse_compat = True``.
+
+* Change the return value of ``Client.read()`` and ``Model.read()`` methods
+  if search domain is an empty list:  it returns ``False``.
+
+* Improve error formatting for recent Odoo versions, in interactive mode.
+
+* Refactor the construction of ``Service`` proxies.
+
+* Drop compatibility with Python 2.6.
+
+
+1.7 (2018-11-22)
+~~~~~~~~~~~~~~~~
+
+* Fully support Odoo 10 and Odoo 11.
+
+* New method ``Client.clone_database`` based on ``Client.db.duplicate_database``.
+
+* Optional ``login`` and ``country_code`` arguments for
+  ``Client.create_database`` in Odoo 9+.
+
+* Use the ``context`` for the ``search`` methods.
+
+* Service ``Client._report`` is removed in Odoo 11. Methods ``Client.report``,
+  ``Client.report_get`` and ``Client.render_report`` are removed too.
+
+* More robust Python 2 detection logic.
+
+
 1.6.3 (2015-12-30)
 ~~~~~~~~~~~~~~~~~~
 

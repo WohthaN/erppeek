@@ -10,6 +10,10 @@ ID1, ID2 = 4001, 4002
 STABLE = ['uninstallable', 'uninstalled', 'installed']
 
 
+def _skip_test(test_case):
+    pass
+
+
 class IdentDict(object):
     def __init__(self, _id):
         self._id = _id
@@ -28,86 +32,121 @@ DIC2 = IdentDict(ID2)
 
 class TestService(XmlRpcTestCase):
     """Test the Service class."""
+    protocol = 'xmlrpc'
 
     def _patch_service(self):
         return mock.patch('erppeek.ServerProxy._ServerProxy__request').start()
 
+    def _get_client(self):
+        client = mock.Mock()
+        client._server = 'http://127.0.0.1:8069/%s' % self.protocol
+        proxy = getattr(erppeek.Client, '_proxy_%s' % self.protocol)
+        client._proxy = proxy.__get__(client, erppeek.Client)
+        return client
+
     def test_service(self):
-        server = 'http://127.0.0.1:8069'
-        svc_alpha = erppeek.Service(server, 'alpha', ['beta'])
+        client = self._get_client()
+        svc_alpha = erppeek.Service(client, 'alpha', ['beta'])
 
         self.assertIn('alpha', str(svc_alpha.beta))
-        self.assertIn('_ServerProxy__request', str(svc_alpha.beta(42)))
         self.assertRaises(AttributeError, getattr, svc_alpha, 'theta')
-        self.assertCalls(call('beta', (42,)), "().__str__")
+        if self.protocol == 'xmlrpc':
+            self.assertIn('_ServerProxy__request', str(svc_alpha.beta(42)))
+            self.assertCalls(call('beta', (42,)), "().__str__")
+        else:
+            self.assertCalls()
         self.assertOutput('')
 
     def test_service_openerp(self):
-        server = 'http://127.0.0.1:8069'
+        client = self._get_client()
 
         def get_proxy(name, methods=None):
             if methods is None:
                 methods = erppeek._methods.get(name, ())
-            return erppeek.Service(server, name, methods, verbose=False)
+            return erppeek.Service(client, name, methods, verbose=False)
 
         self.assertIn('common', str(get_proxy('common').login))
         login = get_proxy('common').login('aaa')
-        self.assertIn('_ServerProxy__request', str(login))
         with self.assertRaises(AttributeError):
             get_proxy('common').non_existent
-        self.assertCalls(call('login', ('aaa',)), 'call().__str__')
+        if self.protocol == 'xmlrpc':
+            self.assertIn('_ServerProxy__request', str(login))
+            self.assertCalls(call('login', ('aaa',)), 'call().__str__')
+        else:
+            self.assertEqual(login, 'JSON_RESULT',)
+            self.assertCalls(ANY)
         self.assertOutput('')
 
-    def test_service_openerp_client(self, server_version='8.0'):
-        server = 'http://127.0.0.1:8069'
-        self.service.side_effect = [server_version, ['newdb'], 1]
+    def test_service_openerp_client(self, server_version=11.0):
+        server = 'http://127.0.0.1:8069/%s' % self.protocol
+        return_values = [str(server_version), ['newdb'], 1]
+        if self.protocol == 'jsonrpc':
+            return_values = [{'result': rv} for rv in return_values]
+        self.service.side_effect = return_values
         client = erppeek.Client(server, 'newdb', 'usr', 'pss')
 
         self.service.return_value = ANY
         self.assertIsInstance(client.db, erppeek.Service)
         self.assertIsInstance(client.common, erppeek.Service)
         self.assertIsInstance(client._object, erppeek.Service)
-        self.assertIsInstance(client._report, erppeek.Service)
-        if server_version >= '7.0':
-            self.assertNotIsInstance(client._wizard, erppeek.Service)
+        if server_version >= 11.0:
+            self.assertIs(client._report, None)
+            self.assertIs(client._wizard, None)
+        elif server_version >= 7.0:
+            self.assertIsInstance(client._report, erppeek.Service)
+            self.assertIs(client._wizard, None)
         else:
+            self.assertIsInstance(client._report, erppeek.Service)
             self.assertIsInstance(client._wizard, erppeek.Service)
 
-        self.assertIn('/xmlrpc/db', str(client.db.create_database))
-        self.assertIn('/xmlrpc/db', str(client.db.db_exist))
-        if server_version == '8.0':
+        self.assertIn('/%s|db' % self.protocol, str(client.db.create_database))
+        self.assertIn('/%s|db' % self.protocol, str(client.db.db_exist))
+        if server_version >= 8.0:
             self.assertRaises(AttributeError, getattr,
                               client.db, 'create')
             self.assertRaises(AttributeError, getattr,
                               client.db, 'get_progress')
         else:
-            self.assertIn('/xmlrpc/db', str(client.db.create))
-            self.assertIn('/xmlrpc/db', str(client.db.get_progress))
+            self.assertIn('/%s|db' % self.protocol, str(client.db.create))
+            self.assertIn('/%s|db' % self.protocol, str(client.db.get_progress))
 
         self.assertCalls(ANY, ANY, ANY)
         self.assertOutput('')
 
-    def test_service_openerp_50(self):
-        self.test_service_openerp_client(server_version='5.0')
+    def test_service_openerp_50_to_70(self):
+        self.test_service_openerp_client(server_version=7.0)
+        self.test_service_openerp_client(server_version=6.1)
+        self.test_service_openerp_client(server_version=6.0)
+        self.test_service_openerp_client(server_version=5.0)
 
-    def test_service_openerp_61(self):
-        self.test_service_openerp_client(server_version='6.1')
+    def test_service_odoo_80_90(self):
+        self.test_service_openerp_client(server_version=9.0)
+        self.test_service_openerp_client(server_version=8.0)
 
-    def test_service_openerp_70(self):
-        self.test_service_openerp_client(server_version='7.0')
+    def test_service_odoo_10_11(self):
+        self.test_service_openerp_client(server_version=11.0)
+        self.test_service_openerp_client(server_version=10.0)
+
+
+class TestServiceJsonRpc(TestService):
+    """Test the Service class with JSON-RPC."""
+    protocol = 'jsonrpc'
+
+    def _patch_service(self):
+        return mock.patch('erppeek.http_post', return_value={'result': 'JSON_RESULT'}).start()
 
 
 class TestCreateClient(XmlRpcTestCase):
     """Test the Client class."""
     server_version = '6.1'
     startup_calls = (
-        call(ANY, 'db', ANY, None, verbose=ANY),
+        call(ANY, 'db', ANY, verbose=ANY),
         'db.server_version',
-        call(ANY, 'db', ANY, None, verbose=ANY),
-        call(ANY, 'common', ANY, None, verbose=ANY),
-        call(ANY, 'object', ANY, None, verbose=ANY),
-        call(ANY, 'report', ANY, None, verbose=ANY),
-        call(ANY, 'wizard', ANY, None, verbose=ANY),
+        call(ANY, 'db', ANY, verbose=ANY),
+        call(ANY, 'common', ANY, verbose=ANY),
+        call(ANY, 'object', ANY, verbose=ANY),
+        call(ANY, 'report', ANY, verbose=ANY),
+        call(ANY, 'wizard', ANY, verbose=ANY),
         'db.list',
     )
 
@@ -122,7 +161,7 @@ class TestCreateClient(XmlRpcTestCase):
         self.assertCalls(*expected_calls)
         self.assertEqual(
             client._login.cache,
-            {('http://127.0.0.1:8069', 'newdb', 'usr'): (1, 'pss')})
+            {('http://127.0.0.1:8069/xmlrpc', 'newdb', 'usr'): (1, 'pss')})
         self.assertOutput('')
 
     def test_create_getpass(self):
@@ -151,7 +190,7 @@ class TestCreateClient(XmlRpcTestCase):
         self.service.db.list.return_value = ['database']
         self.assertFalse(erppeek.Client._login.cache)
         erppeek.Client._login.cache[
-            ('http://127.0.0.1:8069', 'database', 'usr')] = (1, 'password')
+            ('http://127.0.0.1:8069/xmlrpc', 'database', 'usr')] = (1, 'password')
 
         client = erppeek.Client('http://127.0.0.1:8069', 'database', 'usr')
         expected_calls = self.startup_calls + (
@@ -318,6 +357,24 @@ class TestClientApi(XmlRpcTestCase):
         )
         self.assertOutput('')
 
+        if float(self.server_version) < 9.0:
+            self.assertRaises(erppeek.Error, create_database, 'xyz', 'db2', user_password='secret', lang='fr_FR', login='other_login', country_code='CA')
+            self.assertRaises(erppeek.Error, create_database, 'xyz', 'db2', login='other_login')
+            self.assertRaises(erppeek.Error, create_database, 'xyz', 'db2', country_code='CA')
+            self.assertOutput('')
+            return
+
+        # Odoo 9
+        self.client.db.list.side_effect = [['db2']]
+        create_database('xyz', 'db2', user_password='secret', lang='fr_FR', login='other_login', country_code='CA')
+
+        self.assertCalls(
+            call.db.create_database('xyz', 'db2', False, 'fr_FR', 'secret', 'other_login', 'CA'),
+            call.db.list(),
+            call.common.login('db2', 'other_login', 'secret'),
+        )
+        self.assertOutput('')
+
     def test_search(self):
         search = self.client.search
         self.service.object.execute.side_effect = self.obj_exec
@@ -338,9 +395,9 @@ class TestClientApi(XmlRpcTestCase):
         domain2 = [('name', '=', 'mushroom'), ('state', '!=', 'draft')]
         self.assertCalls(
             OBJ('foo.bar', 'search', domain),
-            OBJ('foo.bar', 'search', domain, 0, 2, None, None),
-            OBJ('foo.bar', 'search', domain, 80, 99, None, None),
-            OBJ('foo.bar', 'search', domain, 0, None, 'name ASC', None),
+            OBJ('foo.bar', 'search', domain, 0, 2, None),
+            OBJ('foo.bar', 'search', domain, 80, 99, None),
+            OBJ('foo.bar', 'search', domain, 0, None, 'name ASC'),
             OBJ('foo.bar', 'search', domain2),
             OBJ('foo.bar', 'search', domain),
             OBJ('foo.bar', 'search', domain),
@@ -354,7 +411,7 @@ class TestClientApi(XmlRpcTestCase):
         self.assertCalls(OBJ('foo.bar', 'search', 'name like Morice'))
 
         search('foo.bar', ['name like Morice'], missingkey=42)
-        self.assertCalls(OBJ('foo.bar', 'search', domain, 0, None, None, None))
+        self.assertCalls(OBJ('foo.bar', 'search', domain))
         self.assertOutput('Ignoring: missingkey = 42\n')
 
         self.assertRaises(TypeError, search)
@@ -452,21 +509,21 @@ class TestClientApi(XmlRpcTestCase):
         domain2 = [('name', '=', 'mushroom'), ('state', '!=', 'draft')]
         self.assertCalls(
             OBJ('foo.bar', 'search', domain), call_read(),
-            OBJ('foo.bar', 'search', domain, 0, 2, None, None), call_read(),
-            OBJ('foo.bar', 'search', domain, 80, 99, None, None), call_read(),
-            OBJ('foo.bar', 'search', domain, 0, None, 'name ASC', None),
+            OBJ('foo.bar', 'search', domain, 0, 2, None), call_read(),
+            OBJ('foo.bar', 'search', domain, 80, 99, None), call_read(),
+            OBJ('foo.bar', 'search', domain, 0, None, 'name ASC'),
             call_read(),
             OBJ('foo.bar', 'search', domain), call_read(['birthdate', 'city']),
-            OBJ('foo.bar', 'search', domain, 0, 2, None, None),
+            OBJ('foo.bar', 'search', domain, 0, 2, None),
             call_read(['birthdate', 'city']),
-            OBJ('foo.bar', 'search', domain, 0, 2, None, None),
+            OBJ('foo.bar', 'search', domain, 0, 2, None),
             call_read(['birthdate', 'city']),
-            OBJ('foo.bar', 'search', domain, 0, None, 'name ASC', None),
+            OBJ('foo.bar', 'search', domain, 0, None, 'name ASC'),
             call_read(),
             OBJ('foo.bar', 'search', domain2), call_read(),
             OBJ('foo.bar', 'search', domain), call_read(),
             OBJ('foo.bar', 'search', domain), call_read(),
-            OBJ('foo.bar', 'search', domain, 80, 99, None, None),
+            OBJ('foo.bar', 'search', domain, 80, 99, None),
             call_read(['birthdate', 'city']),
         )
         self.assertOutput('')
@@ -486,6 +543,8 @@ class TestClientApi(XmlRpcTestCase):
                          [False, False])
         self.assertEqual(read('foo.bar', [False], 'first_name', order=True),
                          [False])
+        self.assertEqual(read('foo.bar', [], 'first_name'), False)
+        self.assertEqual(read('foo.bar', [], 'first_name', order=True), False)
 
         self.assertCalls()
 
@@ -523,7 +582,7 @@ class TestClientApi(XmlRpcTestCase):
 
         self.assertCalls(
             OBJ('foo.bar', 'read', ['name like Morice'], None),
-            OBJ('foo.bar', 'search', domain, 0, None, None, None),
+            OBJ('foo.bar', 'search', domain),
             OBJ('foo.bar', 'read', ANY, None))
         self.assertOutput('Ignoring: missingkey = 42\n')
 
@@ -726,7 +785,10 @@ class TestClientApi(XmlRpcTestCase):
         if button == 'uninstall':
             execute_return[3:3] = [[], ANY]
             expected_calls[3:3] = [
-                imm + ('search', [('id', 'in', [42]), ('state', '!=', 'installed')]),
+                imm + ('search', [('id', 'in', [42]),
+                                  ('state', '!=', 'installed'),
+                                  ('state', '!=', 'to upgrade'),
+                                  ('state', '!=', 'to remove')]),
                 imm + ('write', [42], {'state': 'to remove'}),
             ]
 
@@ -748,10 +810,7 @@ class TestClientApi50(TestClientApi):
     """Test the Client API for OpenERP 5."""
     server_version = '5.0'
 
-    def _skip(self):
-        # raise self.skipTest('Not supported with OpenERP 5')
-        pass
-    test_execute_kw = test_render_report = _skip
+    test_execute_kw = test_render_report = _skip_test
 
     def test_create_database(self):
         create_database = self.client.create_database
@@ -800,7 +859,10 @@ class TestClientApi50(TestClientApi):
         if button == 'uninstall':
             execute_return[3:3] = [[], ANY]
             expected_calls[3:3] = [
-                imm + ('search', [('id', 'in', [42]), ('state', '!=', 'installed')]),
+                imm + ('search', [('id', 'in', [42]),
+                                  ('state', '!=', 'installed'),
+                                  ('state', '!=', 'to upgrade'),
+                                  ('state', '!=', 'to remove')]),
                 imm + ('write', [42], {'state': 'to remove'}),
             ]
 
@@ -811,3 +873,16 @@ class TestClientApi50(TestClientApi):
 
         self.assertIn('to process', self.stdout.popvalue())
         self.assertOutput('')
+
+
+class TestClientApi90(TestClientApi):
+    """Test the Client API for Odoo 9."""
+    server_version = '9.0'
+    test_wizard = _skip_test
+
+
+class TestClientApi11(TestClientApi):
+    """Test the Client API for Odoo 11."""
+    server_version = '11.0'
+    test_wizard = _skip_test
+    test_report = test_render_report = test_report_get = _skip_test
