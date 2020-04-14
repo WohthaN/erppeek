@@ -24,6 +24,9 @@ from threading import current_thread
 from urllib.request import Request, urlopen
 from xmlrpc.client import Fault, ServerProxy, MININT, MAXINT
 
+import logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
 
 try:
     import requests
@@ -388,13 +391,13 @@ class Service(object):
                 if len(snt) > maxcol:
                     suffix = '... L=%s' % len(snt)
                     snt = snt[:maxcol - len(suffix)] + suffix
-                print('--> ' + snt)
+                logging.info('--> ' + snt)
                 res = self._dispatch(name, args)
                 rcv = str(res)
                 if len(rcv) > maxcol:
                     suffix = '... L=%s' % len(rcv)
                     rcv = rcv[:maxcol - len(suffix)] + suffix
-                print('<-- ' + rcv)
+                logging.info('<-- ' + rcv)
                 return res
         else:
             wrapper = lambda s, *args: s._dispatch(name, args)
@@ -625,7 +628,7 @@ class Client(object):
                 global_vars['model'] = client.model
                 global_vars['models'] = client.models
                 global_vars['do'] = client.execute
-                print('Logged in as %r' % (client.user,))
+                logging.info('Logged in as %r' % (client.user,))
             else:
                 global_vars.update({'model': None, 'models': None, 'do': None})
 
@@ -634,7 +637,7 @@ class Client(object):
             try:
                 self._login(user, password=password, database=database)
             except Error as exc:
-                print('%s: %s' % (exc.__class__.__name__, exc))
+                logging.info('%s: %s' % (exc.__class__.__name__, exc))
             else:
                 # Register the new globals()
                 self.connect()
@@ -728,7 +731,7 @@ class Client(object):
             params = params + (context,)
         # Ignore extra keyword arguments
         for item in kwargs.items():
-            print('Ignoring: %s = %r' % item)
+            logging.info('Ignoring: %s = %r' % item)
         res = self._execute(obj, method, *params)
         if ordered:
             # The results are not in the same order as the ids
@@ -779,7 +782,7 @@ class Client(object):
         ir_module = self.model('ir.module.module', False)
         updated, added = ir_module.update_list()
         if added:
-            print('%s module(s) added to the list' % added)
+            logging.info('%s module(s) added to the list' % added)
         # Find modules
         ids = modules and ir_module.search([('name', 'in', modules)])
         if ids:
@@ -808,16 +811,16 @@ class Client(object):
         mods = ir_module.read([_pending_state], 'name state')
         if not mods:
             if ids:
-                print('Already up-to-date: %s' %
+                logging.info('Already up-to-date: %s' %
                       self.modules([('id', 'in', ids)]))
             elif modules:
                 raise Error('Module(s) not found: %s' % ', '.join(modules))
-            print('%s module(s) updated' % updated)
+            logging.info('%s module(s) updated' % updated)
             return
-        print('%s module(s) selected' % len(ids))
-        print('%s module(s) to process:' % len(mods))
+        logging.info('%s module(s) selected' % len(ids))
+        logging.info('%s module(s) to process:' % len(mods))
         for mod in mods:
-            print('  %(state)s\t%(name)s' % mod)
+            logging.info('  %(state)s\t%(name)s' % mod)
 
         # Empty the models' cache
         self._models.clear()
